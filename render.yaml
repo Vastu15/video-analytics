@@ -3,8 +3,8 @@ services:
     name: video-processing-app
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: ./start.sh
+    buildCommand: pip install -r requirements.txt && mkdir -p temp downloaded_files
+    startCommand: streamlit run video_processing.py --server.port $PORT --server.address 0.0.0.0 --server.headless true --server.fileWatcherType none
     envVars:
       - key: GOOGLE_API_KEY
         sync: false 
