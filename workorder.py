@@ -8,7 +8,7 @@ global found_count
 # Config
 API_TEMPLATE = "https://backend.blackstonemechanical.com/blackstone-new-backend/api/WorkOrders/GetFiles/{}"
 API_HEADERS = {
-    "x-api-key": "0imfnc8mVLWwsAawjYr4Rx-Af50DDqtlx",
+    "x-api-key": "",
     "User-Agent": "curl/8.0.1",
     "Accept": "*/*",
 }
