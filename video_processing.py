@@ -175,7 +175,7 @@ FORMAT ALL OBSERVATIONS USING THE PRESCRIBED TEMPLATE STRUCTURE IN THE USER PROM
 
 
 def process_media_files(
-    uploaded_files, work_order_info=None, retry_count=0, max_retries=2
+    uploaded_files, work_order_info=None, retry_count=0, max_retries=5
 ):
     """Process both video and image files for household issue analysis with retry logic"""
 
@@ -363,6 +363,65 @@ FORMAT ALL OBSERVATIONS USING THE PRESCRIBED TEMPLATE STRUCTURE IN THE USER PROM
                     temperature=0.0,
                 ),
             )
+            # Check if response has valid content
+        if not response.text or response.text.strip() == "":
+            # Handle empty response case - retry with main model first
+            if retry_count < max_retries:
+                st.warning(
+                    f"⚠️ {model_name} returned empty response (attempt {retry_count + 1}/{max_retries + 1}). Retrying..."
+                )
+                st.write(f"Debug: Response object: {type(response)}")
+                st.write(
+                    f"Debug: Response candidates: {len(response.candidates) if hasattr(response, 'candidates') else 'None'}"
+                )
+                if hasattr(response, "candidates") and response.candidates:
+                    candidate = response.candidates[0]
+                    st.write(
+                        f"Debug: Finish reason: {candidate.finish_reason if hasattr(candidate, 'finish_reason') else 'None'}"
+                    )
+                    st.write(
+                        f"Debug: Content parts: {candidate.content.parts if hasattr(candidate, 'content') and candidate.content else 'None'}"
+                    )
+
+                st.info(
+                    f"🔄 Retrying with {model_name} in {(retry_count + 1) * 2} seconds..."
+                )
+                time.sleep((retry_count + 1) * 2)  # Exponential backoff
+                return process_media_files(
+                    uploaded_files, work_order_info, retry_count + 1, max_retries
+                )
+            else:
+                # After max retries with main model, try fallback model
+                st.warning(
+                    f"⚠️ {model_name} failed after {max_retries + 1} attempts. Trying fallback model ({fallback_model})..."
+                )
+
+                # Try with fallback model using the same detailed prompt
+                fallback_response = client.models.generate_content(
+                    model=fallback_model,
+                    contents=[
+                        types.Content(
+                            role="user",
+                            parts=content_parts,
+                        ),
+                        USER_PROMPT,
+                    ],
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0.0,
+                    ),
+                )
+
+                if fallback_response.text and fallback_response.text.strip():
+                    st.info(
+                        f"✅ Analysis completed using fallback model ({fallback_model})"
+                    )
+                    return fallback_response.text
+                else:
+                    raise ValueError(
+                        f"Both {model_name} and {fallback_model} returned empty responses after {max_retries + 1} attempts. This may indicate content policy restrictions or file processing issues."
+                    )
+
         return response.text
 
     except Exception as e:
@@ -375,16 +434,18 @@ FORMAT ALL OBSERVATIONS USING THE PRESCRIBED TEMPLATE STRUCTURE IN THE USER PROM
         ):
             if retry_count < max_retries:
                 st.warning(
-                    f"⚠️ API error (attempt {retry_count + 1}/{max_retries + 1}): {error_message}"
+                    f"⚠️ API error with {model_name} (attempt {retry_count + 1}/{max_retries + 1}): {error_message}"
                 )
-                st.info(f"🔄 Retrying in {(retry_count + 1) * 2} seconds...")
+                st.info(
+                    f"🔄 Retrying with {model_name} in {(retry_count + 1) * 2} seconds..."
+                )
                 time.sleep((retry_count + 1) * 2)  # Exponential backoff
                 return process_media_files(
                     uploaded_files, work_order_info, retry_count + 1, max_retries
                 )
             else:
-                # Try fallback model as last resort
-                st.warning("🔄 Trying fallback model...")
+                # Try fallback model as last resort for server errors
+                st.warning("🔄 Trying fallback model for server error...")
                 try:
                     response = client.models.generate_content(
                         model=fallback_model,
@@ -400,10 +461,17 @@ FORMAT ALL OBSERVATIONS USING THE PRESCRIBED TEMPLATE STRUCTURE IN THE USER PROM
                             temperature=0.0,
                         ),
                     )
-                    st.info(
-                        f"✅ Analysis completed using fallback model ({fallback_model})"
-                    )
-                    return response.text
+
+                    if response.text and response.text.strip():
+                        st.info(
+                            f"✅ Analysis completed using fallback model ({fallback_model})"
+                        )
+                        return response.text
+                    else:
+                        raise ValueError(
+                            f"Fallback model ({fallback_model}) also returned empty response."
+                        )
+
                 except Exception as fallback_error:
                     st.error(
                         f"❌ Analysis failed with both models. Please try again later."
@@ -766,7 +834,22 @@ def main():
                             st.error(f"❌ Error during analysis: {error_message}")
 
                             # Provide specific guidance based on error type
-                            if any(
+                            if "empty response" in error_message.lower():
+                                st.info("🤖 **AI Model Response Issue:**")
+                                st.info(
+                                    "• The AI model processed your request but returned no content"
+                                )
+                                st.info(
+                                    "• This may be due to content policy restrictions"
+                                )
+                                st.info("• Try with different/smaller video files")
+                                st.info(
+                                    "• Ensure video content is appropriate for analysis"
+                                )
+                                st.info(
+                                    "• Check if video files are corrupted or unreadable"
+                                )
+                            elif any(
                                 code in error_message
                                 for code in ["500", "503", "INTERNAL"]
                             ):
